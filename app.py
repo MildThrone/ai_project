@@ -1,4 +1,4 @@
-from checker import similarity_rating
+from checker_v2 import similarity_rating
 from extensions import *
 
 # from models import Test, User, Role
@@ -313,9 +313,9 @@ def answer():
     mark = similarity_rating(answers[q_no], user_answer)
 
     if mark >= 0.9:
-        mark = round(0.9 * marks[q_no])
+        mark = round(1 * marks[q_no])
     elif mark >= 0.85:
-        mark = round(0.85 * marks[q_no])
+        mark = 0.85 * marks[q_no]
     elif mark >= 0.7:
         mark = 0.5 * marks[q_no]
     else:
