@@ -55,7 +55,8 @@ This model has the highest average performance among [the pretrained NLP models]
 
 ## Backend
 
-The backend is built in Python's Flask framework. 
+The backend is built in Python's Flask framework. MariaDB is set up as the database for the entire backend. The backend uses an 
+Object-Relational Mapper provided by SQLAlchemy to handle translation of the classes to tables in the database.
 
 The backend implements 3 core classes: 
   1. User
@@ -70,7 +71,9 @@ by their test administrator.
 
 ### User class
 
-The user class uses the following attributes:
+The User class is designed to handle abstraction of administrators on the site.
+
+The user class has the following attributes:
   1. name
   2. email
   3. password
@@ -85,3 +88,203 @@ Using the `check_password_hash` function from the werkzeug.security package, exi
 
 ### Test class
 
+The Test class is designed to handle abstraction of tests administered through the site. The class implements a function 
+to store the test questions, answers and associated marks in a text file with the files named according to the unique 
+test code assigned by the administrator.
+
+The test class has the following attributes:
+  1. author
+  2. course
+  3. code
+  4. test_file
+  5. date_created
+
+### Result class
+
+Result handles the results of tests taken by the students on the site. This class has functions to persist the results of 
+the tests taken to the database.
+
+This class has the following attributes:
+  1. code
+  2. student
+  3. score
+  4. date
+
+
+## Authentication and Authorization
+
+2 forms of authentication were used in the backend to control access to administrators and the students taking the tests. 
+Administrators are controlled using JWT-based authentication while students are authenticated via a session-based system.
+
+## Endpoints
+
+The application backend has 7 endpoints available to the frontend. 
+
+### Index
+
+Endpoint: `\`
+
+Request Structure:
+```
+{
+    "student": "student details",
+    "code": "test code"
+}
+```
+
+Response Structure:
+```
+Status code: 201
+{
+    "message": "Test already taken by student",
+    "student": "10505050",
+    "score": 5,
+    "date": "Year-month-day"
+}
+```
+
+```
+Status code: 200
+{
+    "message": "success"
+}
+```
+
+### Register
+
+Endpoint: `/register`
+
+Request Structure:
+```
+{
+    "name":"Janet B",
+    "email": "janet@hmail.com",
+    "password": "password",
+    "conf_passwd": "password"
+}
+```
+
+Response Structure:
+```
+Status code: 215
+{
+    'message': 'Passwords do not match'
+}
+```
+
+```
+Status code: 200
+{
+    'message': 'Success'
+}
+```
+
+### Login
+Endpoint: `/login`
+
+Login details are required and passed in the authentication headers.
+
+```
+  username = email
+  password = password
+```
+
+Response Structure:
+```
+Status code:200
+{
+    'token': token,
+    message': 'user logged in'
+}
+```
+
+```
+Status code: 201
+{
+    'message': 'user login failed'
+}
+```
+
+### Create-test
+
+Endpoint: `/create-test`
+
+Request Structure:
+```
+{
+    "author": "James Webb",
+    "course":"AI",
+    "code":"CA1004",
+    "questions":{
+        "1":["question", "answer", 5],
+        "2":["question2", "answer2", 5],
+        "3":["question3", "answer3", 5],
+        "4":["question4", "answer4", 5]
+    }    
+}
+```
+
+Response Structure:
+```
+Status code: 409
+{
+   "error": "test code exists"
+}
+```
+
+```
+Status code: 200
+{
+    "message": "test uploaded"
+}
+```
+
+### Get-test
+
+Endpoint: `/get-test/<string:code>`
+
+Response Structure:
+```
+Status code: 200
+{
+    "questions": {
+        "1": "question",
+        "2": "question2",
+        "3": "question",
+        "4": "question2"
+    }
+}
+```
+
+### Answer
+
+Endpoint: `/answer`
+
+Request Structure:
+```
+{
+    "num_id": 1,
+    "answer": "answer",
+    "end": "False|True"
+}
+```
+
+Response Structure:
+```
+Status code: 200
+{
+    "score": 5
+}
+```
+
+### Logout
+
+Endpoint: `/logout`
+
+Response Structure:
+```
+Status code: 200
+{
+    "message": "logged out successfully"
+}
+```
