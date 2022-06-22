@@ -122,23 +122,40 @@ def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         try:
-            # token = request.json['token']
             auth_header = request.headers.get('Authorization')
             token = auth_header.split(" ")[1]
-            # print(token)
-            # token = request.args.get('token')
-            print(jwt.decode(token, app.config['SECRET_KEY']))
             try:
-                data = jwt.decode(token, app.config['SECRET_KEY'])
+                data = jwt.decode(token, app.config['SECRET_KEY'], algorithms="HS256")
                 session['user'] = data['user']
             except jwt.InvalidTokenError:
                 return jsonify({'error': 'Invalid token'}), 403
 
-        except jwt.__all__:
-            return jsonify({'error': 'Missing token'}), 403
+        except BaseException as error:
+            return jsonify({'error': str(error)}), 403
 
         return f(*args, **kwargs)
+    return decorated
 
+
+def student_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        try:
+            auth_header = request.headers.get('Authorization')
+            token = auth_header.split(" ")[1]
+            try:
+                data = jwt.decode(token, app.config['SECRET_KEY'], algorithms="HS256")
+                session['student'] = data['student']
+                session['code'] = data['code']
+            except jwt.InvalidTokenError as e:
+                print(str(e))
+                return jsonify({'error': 'Invalid token'}), 403
+
+        except BaseException as error:
+            print(str(error))
+            return jsonify({'error': "Backend error"}), 403
+
+        return f(*args, **kwargs)
     return decorated
 
 
@@ -173,12 +190,16 @@ def index():
             201
         )
     else:
-        session['user'] = student
-        session['code'] = code
-        #         generate jwt for student taking the test
+        # generate jwt for student taking the test
+        token = jwt.encode({'student': student,
+                            'code': code,
+                            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=2)},
+                           app.config['SECRET_KEY'])
+
         return make_response(
             jsonify({
-                "message": "success"
+                "message": "test available",
+                "token": token
             }),
             200
         )
@@ -260,12 +281,15 @@ def login():
 
 
 @app.route('/create-test', methods=['POST'])
+@token_required
 def create_test():
-    if Test.query.filter_by(request.json['code']).first():
+    code = request.json['code']
+    print(code)
+    found = Test.query.filter_by(code=code).first()
+    if found:
         return jsonify({
-            'code': 409,
             'error': 'test code exists'
-        })
+        }), 409
     else:
         test = Test(request.json["author"], request.json["course"], request.json['code'],
                     filename="{0}.txt".format(request.json['code']))
@@ -281,6 +305,7 @@ marks = {}
 
 
 @app.route('/get-test/<string:code>')
+@student_required
 def get_test(code):
     with open("{0}/{1}.txt".format(os.getenv('TESTS_PATH'), code), 'r') as handle:
         parsed = json.load(handle)
@@ -306,12 +331,21 @@ def get_test(code):
 
 
 @app.route('/answer', methods=['POST'])
+@student_required
 def answer():
     user_answer = request.json['answer']
     q_no = request.json['num_id']
 
-    mark = similarity_rating(answers[q_no], user_answer)
+    mark = similarity_rating(answers.get(q_no), user_answer)
 
+    print(answers.get(q_no))
+    print(user_answer)
+    print(mark)
+    print(marks.get(q_no))
+    print(marks)
+    print(answers.keys())
+    print(answers)
+    print(marks.keys())
     if mark >= 0.9:
         mark = round(1 * marks[q_no])
     elif mark >= 0.85:
@@ -327,7 +361,23 @@ def answer():
         result = Result(session['code'], session['user'], session['score'])
         result.persist()
 
-    return mark
+    return make_response(
+        jsonify({
+            "score": mark
+        }),
+        200
+    )
+
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    session.pop('user')
+    return make_response(
+        jsonify({
+            "message": "logged out successfully"
+        }),
+        200
+    )
 
 
 if __name__ == '__main__':
