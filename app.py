@@ -1,3 +1,5 @@
+import json
+
 from checker_v2 import similarity_rating
 from extensions import *
 
@@ -31,12 +33,12 @@ class Test(db.Model):
     def persist(self):
         db.session.add(self)
         db.session.commit()
-        print("persisted")
+        # print("persisted")
         self.create_file()
 
     def create_file(self):
         file = open("{0}/{1}".format(os.getenv('TESTS_PATH'), self.test_file), 'w')
-        file.write(json.dumps(request.json['questions']))
+        file.write(json.dumps(request.json['data']))
 
         file.close()
 
@@ -53,6 +55,10 @@ class Result(db.Model):
         self.code = code
         self.student = student
         self.score = score
+
+    def update_score(self, score):
+        self.score = score
+        self.persist()
 
     def persist(self):
         db.session.add(self)
@@ -118,7 +124,7 @@ db.create_all()
 #
 #   Decorators
 #
-def token_required(f):
+def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         try:
@@ -134,6 +140,7 @@ def token_required(f):
             return jsonify({'error': str(error)}), 403
 
         return f(*args, **kwargs)
+
     return decorated
 
 
@@ -156,6 +163,7 @@ def student_required(f):
             return jsonify({'error': "Backend error"}), 403
 
         return f(*args, **kwargs)
+
     return decorated
 
 
@@ -178,14 +186,30 @@ def index():
     student = request.json['student']
     code = request.json['code']
 
-    found = Result.query.filter_by(student=student).first()
-    if found and code == found.code:
+    test = Test.query.filter_by(code=code).first()
+    if test is None:
+        return make_response(
+            jsonify({
+                "message": "Test code not results"
+            }),
+            404
+        )
+
+    results = Result.query.filter_by(student=student).first()
+    result = Result
+    taken = False
+    for _result in results:
+        if _result.code == code:
+            taken = True
+            result = _result
+
+    if taken:
         return make_response(
             jsonify({
                 "message": "Test already taken by student",
-                "student": found.student,
-                "score": found.score,
-                "date": found.date
+                "student": result.student,
+                "score": result.score,
+                "date": result.date
             }),
             201
         )
@@ -270,21 +294,17 @@ def login():
         "author": "James Webb",
         "course":"AI",
         "code":"CA1004",
-        "questions":{
-            "1":["question", "answer", 5],
-            "2":["question2", "answer2", 5],
-            "3":["question3", "answer3", 5],
-            "4":["question4", "answer4", 5]
-        }    
+        "questions":["question 1", "question 2", "question 3"],
+        "answers": ["answer 1", "answer 2", "answer 3"],
+        "marks": [10, 4, 5]
     }
 """
 
 
 @app.route('/create-test', methods=['POST'])
-@token_required
+@admin_required
 def create_test():
     code = request.json['code']
-    print(code)
     found = Test.query.filter_by(code=code).first()
     if found:
         return jsonify({
@@ -294,14 +314,10 @@ def create_test():
         test = Test(request.json["author"], request.json["course"], request.json['code'],
                     filename="{0}.txt".format(request.json['code']))
         test.persist()
+
         return jsonify({
             'message': 'test uploaded'
         }), 200
-
-
-questions = {}
-answers = {}
-marks = {}
 
 
 @app.route('/get-test/<string:code>')
@@ -313,10 +329,15 @@ def get_test(code):
     session['code'] = code
     session['score'] = 0
 
-    for i in parsed:
-        questions[i] = parsed[i][0]
-        answers[i] = parsed[i][1]
-        marks[i] = parsed[i][2]
+    jwt_token = request.headers.get('Authorization').split(' ')[1]
+    data = jwt.decode(jwt_token, app.config['SECRET_KEY'], algorithms='HS256')
+    result = Result(code, data['student'], session['score'])
+    result.persist()
+
+    questions = parsed['questions']
+    session['answers'] = parsed['answers']
+    session['marks'] = parsed['marks']
+
     return jsonify({'questions': questions}), 200
 
 
@@ -325,7 +346,6 @@ def get_test(code):
     {
         "num_id": 1,
         "answer": "answer",
-        "end": "False|True"
     }
 """
 
@@ -334,18 +354,19 @@ def get_test(code):
 @student_required
 def answer():
     user_answer = request.json['answer']
-    q_no = request.json['num_id']
+    q_no = request.json['num_id'] - 1
 
-    mark = similarity_rating(answers.get(q_no), user_answer)
+    answers = session['answers']
+    marks = session['marks']
 
-    print(answers.get(q_no))
-    print(user_answer)
-    print(mark)
-    print(marks.get(q_no))
-    print(marks)
-    print(answers.keys())
-    print(answers)
-    print(marks.keys())
+    mark = similarity_rating(answers[q_no], user_answer)
+
+    # print(answers[q_no])
+    # print(user_answer)
+    # print(mark)
+    # print(marks[q_no])
+    # print(marks)
+    # print(answers)
     if mark >= 0.9:
         mark = round(1 * marks[q_no])
     elif mark >= 0.85:
@@ -356,14 +377,47 @@ def answer():
         mark = 0
 
     session['score'] += mark
-
-    if request.json['end']:
-        result = Result(session['code'], session['user'], session['score'])
-        result.persist()
+    results = Result.query.filter_by(student=session['student']).all()
+    for result in results:
+        if result.code == session['code']:
+            # result.score = session['score']
+            result.update_score(session['score'])
 
     return make_response(
         jsonify({
             "score": mark
+        }),
+        200
+    )
+
+
+"""
+    Request structure:
+    {
+        "code":"CA004"
+    }
+"""
+
+
+@app.route('/results', methods=['POST'])
+@admin_required
+def get_results():
+    test_code = request.json['code']
+    records = Result.query.filter_by(code=test_code).all()
+
+    results = []
+    for result in records:
+        item = {
+            "student": result.student,
+            "score": result.score,
+            "date": result.date
+        }
+        results.append(item)
+
+    return make_response(
+        jsonify({
+            "count": len(results),
+            "results": results
         }),
         200
     )
